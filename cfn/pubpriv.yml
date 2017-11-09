@@ -141,6 +141,8 @@ Resources:
             !Ref AppTag,
             !Ref EnvTag,
             "AZ3 Private Subnet"]]
+
+
   NatGatewayEIP01:
     Type: AWS::EC2::EIP
     DependsOn: InternetGatewayAttachment
@@ -156,6 +158,8 @@ Resources:
     DependsOn: InternetGatewayAttachment
     Properties:
       Domain: vpc
+
+
   NatGateway01:
     Type: AWS::EC2::NatGateway
     Properties:
@@ -171,6 +175,9 @@ Resources:
     Properties:
       AllocationId: !GetAtt NatGatewayEIP03.AllocationId
       SubnetId: !Ref PubSubnet03
+
+
+
   PubRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -186,6 +193,7 @@ Resources:
       RouteTableId: !Ref PubRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
+
   PubSubnetRouteTableAssociation01:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -201,6 +209,8 @@ Resources:
     Properties:
       RouteTableId: !Ref PubRouteTable
       SubnetId: !Ref PubSubnet03
+
+
   PrivRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -215,6 +225,7 @@ Resources:
       RouteTableId: !Ref PrivRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway01
+
   PrivSubnetRouteTableAssociation01:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -229,7 +240,7 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PrivRouteTable
-      SubnetId: !Ref PrivSubnet03
+SubnetId: !Ref PrivSubnet03
 
 Outputs:
   VPC:

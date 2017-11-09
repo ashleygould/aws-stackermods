@@ -1,3 +1,48 @@
+"""
+vpc
+    cidrblock
+    routetable
+        pub
+        priv
+    internetgw
+    az
+        subnet
+            pub
+                subnet2rtassoc -> routetable.pub
+                natgw
+                natgweip -> natgw
+                defaultroute -> internetgw
+            priv
+                subnet2rtassoc -> routetable.priv
+                subnet2natgwassoc -> az.subnet.pub.natgw
+                defaultroute -> az.subnet.pub.natgw
+
+one vpc
+one routetable per subnet def
+
+subnet:
+    name: str
+    type: (public|private)
+    public-subnet: (subnet.name|None)
+    routetable: str
+    availabilty-zones: list
+
+azsubnet:
+    name: (str) subnet.name + az-index
+    subnet: subnet
+    az: str
+    az-index: int
+    cidrblock: (str) get(subnet.type,vpc-cidr,az-index)
+    routetable-assoc: subnet.routetable
+    route-default: (str) get(subnet.type, subnet.public-subnet,az-index)
+    natgw:
+    natgweip:
+    natgw-assoc:
+"""
+
+
+
+
 from troposphere import (
     Ref,
     Output,
@@ -19,19 +64,30 @@ GATEWAY = 'InternetGateway'
 GW_ATTACH = 'GatewayAttach'
 VPC_NAME = 'VPC'
 VPC_ID = Ref(VPC_NAME)
-
-
-def subnet_cidr(vpc_cidr, net_type, az_index):
-    if net_type == 'public':
-        subnet_qoud = '1' + str(az_index)
-    elif net_type == 'private':
-        subnet_qoud = '10' + str(az_index)
-    cidr_parts = vpc_cidr.split('.')
-    cidr_parts[2] = subnet_qoud
-    return '.'.join(cidr_parts).replace('/16','/24')
+DEFAULT_SUBNETS = [
+        dict(
+            name='Public',
+            net_type='public',
+            public_subnet=None),
+        dict(
+            name='Private',
+            net_type='private',
+            public_subnet='Public'),
+        ]
 
 
 class VPC(Blueprint):
+    """
+    inputs:
+        region (str:allowed-cfntype.region)
+        vcp-cidr (str:allowed-regex)
+        az-count (int)
+        use-default-subnets (bool)
+        subnets:
+          - name (str)
+            net_type (str:allowed-values)
+            public_subnet (str)
+    """
     VARIABLES = {
         'VpcCIDR': {
             'type': str,
@@ -42,7 +98,24 @@ class VPC(Blueprint):
             'type': int,
             'default': 2,
         },
+        'UseDefaultSubnets': {
+            'type': bool,
+            'default': True,
+        },
+        'CustomSubnets': {
+            'type': list,
+            'default': [],
+        },
     }
+
+    def subnet_cidr(self, vpc_cidr, net_type, az_index):
+        if net_type == 'public':
+            subnet_qoud = '1' + str(az_index)
+        elif net_type == 'private':
+            subnet_qoud = '10' + str(az_index)
+        cidr_parts = vpc_cidr.split('.')
+        cidr_parts[2] = subnet_qoud
+        return '.'.join(cidr_parts).replace('/16','/24')
 
     def create_vpc(self):
         t = self.template
@@ -114,7 +187,7 @@ class VPC(Blueprint):
                         AvailabilityZone=az,
                         VpcId=VPC_ID,
                         DependsOn=GW_ATTACH,
-                        CidrBlock=subnet_cidr(variables['VpcCIDR'], net_type, i),
+                        CidrBlock=self.subnet_cidr(variables['VpcCIDR'], net_type, i),
                         #Tags=Tags(type=net_type),
                     )
                 )
@@ -174,9 +247,37 @@ class VPC(Blueprint):
         #    t.add_output(Output(
         #            'AvailabilityZone0%d' % (i +1),
         #            Value=az))
+        
+    def validate_subnets(self, variables):
+        # validate custom subnets
+        for subnet in variables['CustomSubnets']:
+            if not 'name' in subnet:
+                raise ValueError("User provided subnets must have 'name' field")
+            if not 'net_type' in subnet:
+                raise ValueError("User provided subnets must have 'net_type' field")
+            if subnet['net_type'] not in ['public', 'private']:
+                raise ValueError("Value of 'net_type' field in user provided subnets "
+                                 "must be one of ['public', 'private']")
+            if subnet['net_type'] == 'private':
+                if not 'public_subnet' in subnet:
+                    raise ValueError("User provided subnets must have 'public_subnet' "
+                                     "field if 'net_type' is 'private'")
+                public_subnets = [s['name'] for s in variables['CustomSubnets'] 
+                        if s['net_type'] == 'public']
+                if subnet['public_subnet'] not in public_subnets:
+                    raise ValueError("The 'public_subnet' field in user provided " 
+                                     "subnet '%s' is not a valid public subnet name")
+        # compose subnets list
+        if variables['UseDefaultSubnets']:
+            subnets = DEFAULT_SUBNETS + variables['CustomSubnets']
+        else:
+            subnets = variables['CustomSubnets']
+        return subnets
 
 
     def create_template(self):
-        self.create_vpc()
-        self.create_network()
+        variables = self.get_variables()
+        subnets = self.validate_subnets(variables)
+        #self.create_vpc()
+        #self.create_network()
 
