@@ -14,7 +14,6 @@ vpc
                 defaultroute -> internetgw
             priv
                 subnet2rtassoc -> routetable.priv
-                subnet2natgwassoc -> az.subnet.pub.natgw
                 defaultroute -> az.subnet.pub.natgw
 
 one vpc
@@ -120,7 +119,6 @@ class VPC(Blueprint):
     def create_vpc(self):
         t = self.template
         variables = self.get_variables()
-        print(variables)
         t.add_resource(ec2.VPC(
             'VPC',
             CidrBlock=variables['VpcCIDR'],
@@ -248,8 +246,17 @@ class VPC(Blueprint):
         #            'AvailabilityZone0%d' % (i +1),
         #            Value=az))
         
-    def validate_subnets(self, variables):
-        # validate custom subnets
+
+    def validate_custom_subnets(self):
+        variables = self.get_variables()
+        # compose subnet definitions list
+        if variables['UseDefaultSubnets']:
+            subnet_defs = DEFAULT_SUBNETS + variables['CustomSubnets']
+        else:
+            subnet_defs = variables['CustomSubnets']
+        # validate custom subnet definitions
+        public_subnets = [s['name'] for s in subnet_defs
+                if 'net_type' in s and s['net_type'] == 'public']
         for subnet in variables['CustomSubnets']:
             if not 'name' in subnet:
                 raise ValueError("User provided subnets must have 'name' field")
@@ -262,22 +269,45 @@ class VPC(Blueprint):
                 if not 'public_subnet' in subnet:
                     raise ValueError("User provided subnets must have 'public_subnet' "
                                      "field if 'net_type' is 'private'")
-                public_subnets = [s['name'] for s in variables['CustomSubnets'] 
-                        if s['net_type'] == 'public']
                 if subnet['public_subnet'] not in public_subnets:
-                    raise ValueError("The 'public_subnet' field in user provided " 
-                                     "subnet '%s' is not a valid public subnet name")
-        # compose subnets list
-        if variables['UseDefaultSubnets']:
-            subnets = DEFAULT_SUBNETS + variables['CustomSubnets']
-        else:
-            subnets = variables['CustomSubnets']
-        return subnets
+                    raise ValueError("'%s' is not a valid 'public_subnet' name in user "
+                                     "provided subnet '%s'"
+                                     % (subnet['public_subnet'], subnet['name']))
+        return subnet_defs
+
+
+    def availability_zones(self):
+        variables = self.get_variables()
+        zones = []
+        for i in range(variables['AZCount']):
+            #try:
+            #    az = Select(i, GetAZs(''))
+            az = Select(i, GetAZs(''))
+            zones.append(az)
+        return zones
+
+    def create_route_tables(self, subnet_defs):
+        # one route table for each subnet
+        t = self.template
+        variables = self.get_variables()
+        for s in subnet_defs:
+            route_table_name = '%sRouteTable' % s['name']
+            t.add_resource(
+                ec2.RouteTable(
+                    #Tags=[ec2.Tag('type', net_type)],
+                    route_table_name,
+                    VpcId=VPC_ID,))
 
 
     def create_template(self):
         variables = self.get_variables()
-        subnets = self.validate_subnets(variables)
-        #self.create_vpc()
+        print('variables: %s' % variables)
+        subnet_defs = self.validate_custom_subnets()
+        print('subnet_defs: %s' % subnet_defs)
+        zones = self.availability_zones()
+        print('zones: %s' % zones)
+        self.create_vpc()
+        self.create_gateway()
+        self.create_route_tables(subnet_defs)
         #self.create_network()
 
