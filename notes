@@ -18,4 +18,20 @@ stacker build -o -v -i conf/vpc.conf.yml
 [2017-11-07T15:41:57] INFO stacker.plan:326(outline):   - step: 1: target: "testvpc-vpc", action: "_launch_stack"
 
 
-stacker build -v -i conf/vpc.conf.yml 
+
+# just dump template to file
+mkdir -p test/stack_templates/testvpc-vpc/
+stacker build -v -i -r us-west-2 -d test/ conf/vpc.conf.yml
+
+# build/update stack (interactive)
+stacker build -v -i -r us-west-2 conf/vpc.conf.yml
+
+# destroy stacks
+stacker destroy -v -i -r us-west-2 conf/vpc.conf.yml
+stacker destroy -v -i -r us-west-2 -f conf/vpc.conf.yml
+
+
+
+
+
+

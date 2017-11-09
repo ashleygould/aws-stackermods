@@ -1,12 +1,12 @@
 from troposphere import (
-    #Ref,
+    Ref,
     Output,
-    #Join,
+    Join,
     #FindInMap,
-    #Select,
-    #GetAZs,
+    Select,
+    GetAZs,
     #Tags,
-    #GetAtt
+    GetAtt
 )
 from troposphere import ec2
 #from troposphere.route53 import HostedZone, HostedZoneVPCs
@@ -14,16 +14,35 @@ from stacker.blueprints.base import Blueprint
 #from stacker.blueprints.variables.types import CFNString
 
 
+# these get used as the cfn logical resource names
+GATEWAY = 'InternetGateway'
+GW_ATTACH = 'GatewayAttach'
+VPC_NAME = 'VPC'
+VPC_ID = Ref(VPC_NAME)
+
+
+def subnet_cidr(vpc_cidr, net_type, az_index):
+    if net_type == 'public':
+        subnet_qoud = '1' + str(az_index)
+    elif net_type == 'private':
+        subnet_qoud = '10' + str(az_index)
+    cidr_parts = vpc_cidr.split('.')
+    cidr_parts[2] = subnet_qoud
+    return '.'.join(cidr_parts).replace('/16','/24')
+
+
 class VPC(Blueprint):
     VARIABLES = {
         'VpcCIDR': {
             'type': str,
-            'description': 'vpc cidr block',
+            'description': 'vpc cidr block. must be class b (i.e. /16).',
             'default': '10.10.0.0/16',
-        }
-
+        },
+        'AZCount': {
+            'type': int,
+            'default': 2,
+        },
     }
-
 
     def create_vpc(self):
         t = self.template
@@ -36,8 +55,128 @@ class VPC(Blueprint):
             EnableDnsHostnames=True))
 
         # Just about everything needs this, so storing it on the object
-        #t.add_output(Output("VpcId", Value=VPC_ID))
+        t.add_output(Output("VpcId", Value=VPC_ID))
+
+    def create_gateway(self):
+        t = self.template
+        t.add_resource(ec2.InternetGateway(GATEWAY))
+        t.add_resource(
+            ec2.VPCGatewayAttachment(
+                GW_ATTACH,
+                VpcId=VPC_ID,
+                InternetGatewayId=Ref(GATEWAY)
+            )
+        )
+
+    def create_network(self):
+        t = self.template
+        variables = self.get_variables()
+        self.create_gateway()
+        subnets = {'public': [], 'private': []}
+        net_types = subnets.keys()
+        zones = []
+
+        for net_type in net_types:
+            name_prefix = net_type.capitalize()
+
+            # one route table for each of pub an priv
+            route_table_name = '%sRouteTable' % name_prefix
+            t.add_resource(
+                ec2.RouteTable(
+                    route_table_name,
+                    VpcId=VPC_ID,
+                    #Tags=[ec2.Tag('type', net_type)]
+                )
+            )
+
+            # Internet Gateway
+            if net_type == 'public':
+                t.add_resource(
+                    ec2.Route(
+                        'DefaultPublicRoute',
+                        #RouteTableId=Ref(route_table_name),
+                        RouteTableId=Ref('PublicRouteTable'),
+                        DestinationCidrBlock='0.0.0.0/0',
+                        GatewayId=Ref(GATEWAY)
+                    )
+                )
+
+            # Public and private subnets for each Availability zone
+            for i in range(variables['AZCount']):
+                az = Select(i, GetAZs(''))
+                zones.append(az)
+                name_suffix = '0' + str(i + 1)
+                subnet_name = '%sSubnet%s' % (name_prefix, name_suffix)
+                subnets[net_type].append(subnet_name)
+                t.add_resource(
+                    ec2.Subnet(
+                        subnet_name,
+                        AvailabilityZone=az,
+                        VpcId=VPC_ID,
+                        DependsOn=GW_ATTACH,
+                        CidrBlock=subnet_cidr(variables['VpcCIDR'], net_type, i),
+                        #Tags=Tags(type=net_type),
+                    )
+                )
+
+                # Nat gateways in public subnets, one per AZ
+                if net_type == 'public':
+                    nat_gateway_eip = 'NatGatewayEIP' + name_suffix
+                    nat_gateway = 'NatGateway' + name_suffix
+                    route_name = 'DefaultPrivateRoute' + name_suffix
+                    t.add_resource(
+                        ec2.EIP(
+                            nat_gateway_eip,
+                            Domain='vpc',
+                            DependsOn=GW_ATTACH
+                        )
+                    )
+                    t.add_resource(
+                        ec2.NatGateway(
+                            nat_gateway,
+                            SubnetId=Ref(subnet_name),
+                            AllocationId=GetAtt(nat_gateway_eip, 'AllocationId'),
+                        )
+                    )
+                    # Default routes for private subnets through nat gateways
+                    t.add_resource(
+                        ec2.Route(
+                            route_name,
+                            #RouteTableId=Ref(route_table_name),
+                            RouteTableId=Ref('PrivateRouteTable'),
+                            DestinationCidrBlock='0.0.0.0/0',
+                            NatGatewayId=Ref(nat_gateway),
+                        )
+                    )
+
+                # Accociate each subnet to either the pub or priv route table
+                t.add_resource(
+                    ec2.SubnetRouteTableAssociation(
+                        '%sRouteTableAssociation%s' % (name_prefix, name_suffix),
+                        SubnetId=Ref(subnet_name),
+                        RouteTableId=Ref(route_table_name)
+                    )
+                )
+
+
+        # Outputs
+        for net_type in net_types:
+            t.add_output(Output(
+                    '%sSubnets' % net_type.capitalize(),
+                    Value=Join(',', [Ref(sn) for sn in subnets[net_type]])))
+            for i, sn in enumerate(subnets[net_type]):
+                t.add_output(Output(sn, Value=Ref(sn)))
+
+        #t.add_output(Output(
+        #        'AvailabilityZones',
+        #        Value=Join(',', zones)))
+        #for i, az in enumerate(zones):
+        #    t.add_output(Output(
+        #            'AvailabilityZone0%d' % (i +1),
+        #            Value=az))
+
 
     def create_template(self):
         self.create_vpc()
+        self.create_network()
 
