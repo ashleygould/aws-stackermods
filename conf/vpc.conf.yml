@@ -15,9 +15,9 @@ stacks:
     enabled: true
     variables:
       VpcCIDR: 10.128.0.0/16
-      AZCount: 3
+      AZCount: 2
       UseDefaultSubnets: True
-      CustomSubnets:
-        DB:
-          net_type: private
-          public_subnet: Public
+      #CustomSubnets:
+      #  DB:
+      #    net_type: private
+      #    public_subnet: Public

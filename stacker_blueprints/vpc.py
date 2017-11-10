@@ -176,7 +176,6 @@ class VPC(Blueprint):
                         AvailabilityZone=zones[i],
                         CidrBlock=self.subnet_cidr(variables['VpcCIDR'], subnet_count, i),
                         #Tags=Tags(type=net_type),
-                        #DependsOn=GW_ATTACH,
                         VpcId=VPC_ID))
             subnet_count += 1
 
@@ -186,14 +185,17 @@ class VPC(Blueprint):
         t = self.template
         for name in subnets.keys():
             if subnets[name]['net_type'] == 'public':
+                if name == 'Public':
+                    prefix = ''
+                else:
+                    prefix = name
                 subnets[name]['nat_gateways'] = list()
                 for i in range(len(zones)):
-                    nat_gateway= '%sNatGateway%d' % (name, i)
-                    nat_gateway_eip = '%sNatGatewayEIP%d' % (name, i)
+                    nat_gateway= '%sNatGateway%d' % (prefix, i)
+                    nat_gateway_eip = '%sNatGatewayEIP%d' % (prefix, i)
                     subnets[name]['nat_gateways'].append(nat_gateway)
                     t.add_resource(ec2.EIP(
                             nat_gateway_eip,
-                            #DependsOn=GW_ATTACH,
                             Domain='vpc'))
                     t.add_resource(ec2.NatGateway(
                             nat_gateway,
@@ -201,16 +203,32 @@ class VPC(Blueprint):
                             AllocationId=GetAtt(nat_gateway_eip, 'AllocationId')))
 
 
-    def create_route_tables(self, subnets):
-        # one route table for each subnet
+    def create_public_route_tables(self, subnets):
+        # one route table for each public subnet
         t = self.template
         for name in subnets.keys():
-            route_table_name = '%sRouteTable' % name
-            subnets[name]['route_table'] = route_table_name
-            t.add_resource(ec2.RouteTable(
-                    #Tags=[ec2.Tag('type', net_type)],
-                    route_table_name,
-                    VpcId=VPC_ID,))
+            if subnets[name]['net_type'] == 'public':
+                route_table_name = '%sRouteTable' % name
+                subnets[name]['route_table'] = route_table_name
+                t.add_resource(ec2.RouteTable(
+                        #Tags=[ec2.Tag('type', net_type)],
+                        route_table_name,
+                        VpcId=VPC_ID,))
+
+
+    def create_private_route_tables(self, subnets, zones):
+        # one route table for each az for private subnets
+        t = self.template
+        for name in subnets.keys():
+            if subnets[name]['net_type'] == 'private':
+                subnets[name]['route_table'] = list()
+                for i in range(len(zones)):
+                    route_table_name = '%sRouteTable%d' % (name, i)
+                    subnets[name]['route_table'].append(route_table_name)
+                    t.add_resource(ec2.RouteTable(
+                            #Tags=[ec2.Tag('type', net_type)],
+                            route_table_name,
+                            VpcId=VPC_ID,))
 
 
     def create_route_table_associations(self, subnets, zones):
@@ -218,10 +236,14 @@ class VPC(Blueprint):
         t = self.template
         for name in subnets.keys():
             for i in range(len(zones)):
+                if subnets[name]['net_type'] == 'public':
+                    route_table_name = subnets[name]['route_table']
+                else:
+                    route_table_name = subnets[name]['route_table'][i]
                 t.add_resource(ec2.SubnetRouteTableAssociation(
                         '%sRouteTableAssociation%d' % (name, i),
                         SubnetId=Ref(subnets[name]['az_subnets'][i]),
-                        RouteTableId=Ref(subnets[name]['route_table'])))
+                        RouteTableId=Ref(route_table_name)))
 
 
     def create_default_routes_for_public_subnets(self, subnets):
@@ -237,7 +259,8 @@ class VPC(Blueprint):
 
 
     def create_default_routes_for_private_subnets(self, subnets, zones):
-        # Default routes for private subnets through nat gateways
+        # Default routes for private subnets through nat gateways in each az.
+        # Use the nat gateways defined in the 'public_subnet' for eash subnet.
         t = self.template
         for name in subnets.keys():
             if subnets[name]['net_type'] == 'private':
@@ -246,7 +269,7 @@ class VPC(Blueprint):
                     nat_gateway = subnets[public_subnet]['nat_gateways'][i]
                     t.add_resource(ec2.Route(
                             '%sSubnetDefaultRoute%d' % (name, i),
-                            RouteTableId=Ref(subnets[name]['route_table']),
+                            RouteTableId=Ref(subnets[name]['route_table'][i]),
                             DestinationCidrBlock='0.0.0.0/0',
                             NatGatewayId=Ref(nat_gateway)))
 
@@ -258,7 +281,8 @@ class VPC(Blueprint):
         self.create_internet_gateway()
         self.create_subnets_in_availability_zones(subnets, zones)
         self.create_nat_gateways(subnets, zones)
-        self.create_route_tables(subnets)
+        self.create_public_route_tables(subnets)
+        self.create_private_route_tables(subnets, zones)
         self.create_route_table_associations(subnets, zones)
         self.create_default_routes_for_public_subnets(subnets)
         self.create_default_routes_for_private_subnets(subnets, zones)
