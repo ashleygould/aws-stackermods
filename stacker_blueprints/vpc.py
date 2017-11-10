@@ -16,9 +16,6 @@ vpc
                 subnet2rtassoc -> routetable.priv
                 defaultroute -> az.subnet.pub.natgw
 
-one vpc
-one routetable per subnet def
-
 subnet:
     name: str
     type: (public|private)
@@ -58,21 +55,17 @@ from stacker.blueprints.base import Blueprint
 #from stacker.blueprints.variables.types import CFNString
 
 
-# these get used as the cfn logical resource names
+
+# Default public/private subnet layout
+DEFAULT_SUBNETS = {
+        'Public': dict(net_type='public', public_subnet=None),
+        'Private': dict(net_type='private', public_subnet='Public')}
+
+# These get used as the cfn logical resource names
 GATEWAY = 'InternetGateway'
 GW_ATTACH = 'GatewayAttach'
 VPC_NAME = 'VPC'
 VPC_ID = Ref(VPC_NAME)
-DEFAULT_SUBNETS = [
-        dict(
-            name='Public',
-            net_type='public',
-            public_subnet=None),
-        dict(
-            name='Private',
-            net_type='private',
-            public_subnet='Public'),
-        ]
 
 
 class VPC(Blueprint):
@@ -102,19 +95,53 @@ class VPC(Blueprint):
             'default': True,
         },
         'CustomSubnets': {
-            'type': list,
-            'default': [],
+            'type': dict,
+            'default': dict(),
         },
     }
 
-    def subnet_cidr(self, vpc_cidr, net_type, az_index):
-        if net_type == 'public':
-            subnet_qoud = '1' + str(az_index)
-        elif net_type == 'private':
-            subnet_qoud = '10' + str(az_index)
+
+    def validate_custom_subnets(self):
+        # compose subnet definitions dictionary
+        variables = self.get_variables()
+        subnets = dict()
+        if variables['UseDefaultSubnets']:
+            subnets.update(DEFAULT_SUBNETS)
+        subnets.update(variables['CustomSubnets'])
+        # validate custom subnet definitions
+        public_subnets = [subnet for subnet, attributes in subnets.items()
+                if 'net_type' in attributes and attributes['net_type'] == 'public']
+        for subnet, attributes in variables['CustomSubnets'].items():
+            if not 'net_type' in attributes:
+                raise ValueError("User provided subnets must have 'net_type' field")
+            if attributes['net_type'] not in ['public', 'private']:
+                raise ValueError("Value of 'net_type' field in user provided subnets "
+                                 "must be one of ['public', 'private']")
+            if attributes['net_type'] == 'private':
+                if not 'public_subnet' in attributes:
+                    raise ValueError("User provided subnets must have 'public_subnet' "
+                                     "field if 'net_type' is 'private'")
+                if attributes['public_subnet'] not in public_subnets:
+                    raise ValueError("'%s' is not a valid 'public_subnet' name in user "
+                                     "provided subnet '%s'"
+                                     % (attributes['public_subnet'], subnet))
+        return subnets
+
+
+    def availability_zones(self):
+        variables = self.get_variables()
+        zones = []
+        for i in range(variables['AZCount']):
+            az = Select(i, GetAZs(''))
+            zones.append(az)
+        return zones
+
+
+    def subnet_cidr(self, vpc_cidr, subnet_index, az_index):
         cidr_parts = vpc_cidr.split('.')
-        cidr_parts[2] = subnet_qoud
+        cidr_parts[2] = str(int(cidr_parts[2]) + (subnet_index * 10) + az_index)
         return '.'.join(cidr_parts).replace('/16','/24')
+
 
     def create_vpc(self):
         t = self.template
@@ -122,122 +149,133 @@ class VPC(Blueprint):
         t.add_resource(ec2.VPC(
             'VPC',
             CidrBlock=variables['VpcCIDR'],
-            #EnableDnsSupport=True,
             EnableDnsHostnames=True))
-
-        # Just about everything needs this, so storing it on the object
         t.add_output(Output("VpcId", Value=VPC_ID))
 
-    def create_gateway(self):
+
+    def create_internet_gateway(self):
         t = self.template
         t.add_resource(ec2.InternetGateway(GATEWAY))
-        t.add_resource(
-            ec2.VPCGatewayAttachment(
+        t.add_resource(ec2.VPCGatewayAttachment(
                 GW_ATTACH,
-                VpcId=VPC_ID,
-                InternetGatewayId=Ref(GATEWAY)
-            )
-        )
+                InternetGatewayId=Ref(GATEWAY),
+                VpcId=VPC_ID))
 
-    def create_network(self):
-        t = self.template
+
+    def create_subnets_in_availability_zones(self, subnets, zones):
         variables = self.get_variables()
-        self.create_gateway()
-        subnets = {'public': [], 'private': []}
-        net_types = subnets.keys()
-        zones = []
-
-        for net_type in net_types:
-            name_prefix = net_type.capitalize()
-
-            # one route table for each of pub an priv
-            route_table_name = '%sRouteTable' % name_prefix
-            t.add_resource(
-                ec2.RouteTable(
-                    route_table_name,
-                    VpcId=VPC_ID,
-                    #Tags=[ec2.Tag('type', net_type)]
-                )
-            )
-
-            # Internet Gateway
-            if net_type == 'public':
-                t.add_resource(
-                    ec2.Route(
-                        'DefaultPublicRoute',
-                        #RouteTableId=Ref(route_table_name),
-                        RouteTableId=Ref('PublicRouteTable'),
-                        DestinationCidrBlock='0.0.0.0/0',
-                        GatewayId=Ref(GATEWAY)
-                    )
-                )
-
-            # Public and private subnets for each Availability zone
-            for i in range(variables['AZCount']):
-                az = Select(i, GetAZs(''))
-                zones.append(az)
-                name_suffix = '0' + str(i + 1)
-                subnet_name = '%sSubnet%s' % (name_prefix, name_suffix)
-                subnets[net_type].append(subnet_name)
-                t.add_resource(
-                    ec2.Subnet(
+        t = self.template
+        subnet_count = 0
+        for name in subnets.keys():
+            subnets[name]['az_subnets'] = list()
+            for i in range(len(zones)):
+                subnet_name = '%sSubnet%d' % (name, i)
+                subnets[name]['az_subnets'].append(subnet_name)
+                t.add_resource(ec2.Subnet(
                         subnet_name,
-                        AvailabilityZone=az,
-                        VpcId=VPC_ID,
-                        DependsOn=GW_ATTACH,
-                        CidrBlock=self.subnet_cidr(variables['VpcCIDR'], net_type, i),
+                        AvailabilityZone=zones[i],
+                        CidrBlock=self.subnet_cidr(variables['VpcCIDR'], subnet_count, i),
                         #Tags=Tags(type=net_type),
-                    )
-                )
+                        #DependsOn=GW_ATTACH,
+                        VpcId=VPC_ID))
+            subnet_count += 1
 
-                # Nat gateways in public subnets, one per AZ
-                if net_type == 'public':
-                    nat_gateway_eip = 'NatGatewayEIP' + name_suffix
-                    nat_gateway = 'NatGateway' + name_suffix
-                    route_name = 'DefaultPrivateRoute' + name_suffix
-                    t.add_resource(
-                        ec2.EIP(
+
+    def create_nat_gateways(self, subnets, zones):
+        # Nat gateways in public subnets, one per AZ
+        t = self.template
+        for name in subnets.keys():
+            if subnets[name]['net_type'] == 'public':
+                subnets[name]['nat_gateways'] = list()
+                for i in range(len(zones)):
+                    nat_gateway= '%sNatGateway%d' % (name, i)
+                    nat_gateway_eip = '%sNatGatewayEIP%d' % (name, i)
+                    subnets[name]['nat_gateways'].append(nat_gateway)
+                    t.add_resource(ec2.EIP(
                             nat_gateway_eip,
-                            Domain='vpc',
-                            DependsOn=GW_ATTACH
-                        )
-                    )
-                    t.add_resource(
-                        ec2.NatGateway(
+                            #DependsOn=GW_ATTACH,
+                            Domain='vpc'))
+                    t.add_resource(ec2.NatGateway(
                             nat_gateway,
-                            SubnetId=Ref(subnet_name),
-                            AllocationId=GetAtt(nat_gateway_eip, 'AllocationId'),
-                        )
-                    )
-                    # Default routes for private subnets through nat gateways
-                    t.add_resource(
-                        ec2.Route(
-                            route_name,
-                            #RouteTableId=Ref(route_table_name),
-                            RouteTableId=Ref('PrivateRouteTable'),
+                            SubnetId=Ref(subnets[name]['az_subnets'][i]),
+                            AllocationId=GetAtt(nat_gateway_eip, 'AllocationId')))
+
+
+    def create_route_tables(self, subnets):
+        # one route table for each subnet
+        t = self.template
+        for name in subnets.keys():
+            route_table_name = '%sRouteTable' % name
+            subnets[name]['route_table'] = route_table_name
+            t.add_resource(ec2.RouteTable(
+                    #Tags=[ec2.Tag('type', net_type)],
+                    route_table_name,
+                    VpcId=VPC_ID,))
+
+
+    def create_route_table_associations(self, subnets, zones):
+        # Accociate each az subnet to a route table
+        t = self.template
+        for name in subnets.keys():
+            for i in range(len(zones)):
+                t.add_resource(ec2.SubnetRouteTableAssociation(
+                        '%sRouteTableAssociation%d' % (name, i),
+                        SubnetId=Ref(subnets[name]['az_subnets'][i]),
+                        RouteTableId=Ref(subnets[name]['route_table'])))
+
+
+    def create_default_routes_for_public_subnets(self, subnets):
+        # Add route through Internet Gateway to route tables for public subnets
+        t = self.template
+        for name in subnets.keys():
+            if subnets[name]['net_type'] == 'public':
+                t.add_resource(ec2.Route(
+                        '%sSubnetDefaultRoute' % name,
+                        RouteTableId=Ref(subnets[name]['route_table']),
+                        DestinationCidrBlock='0.0.0.0/0',
+                        GatewayId=Ref(GATEWAY)))
+
+
+    def create_default_routes_for_private_subnets(self, subnets, zones):
+        # Default routes for private subnets through nat gateways
+        t = self.template
+        for name in subnets.keys():
+            if subnets[name]['net_type'] == 'private':
+                for i in range(len(zones)):
+                    public_subnet = subnets[name]['public_subnet']
+                    nat_gateway = subnets[public_subnet]['nat_gateways'][i]
+                    t.add_resource(ec2.Route(
+                            '%sSubnetDefaultRoute%d' % (name, i),
+                            RouteTableId=Ref(subnets[name]['route_table']),
                             DestinationCidrBlock='0.0.0.0/0',
-                            NatGatewayId=Ref(nat_gateway),
-                        )
-                    )
-
-                # Accociate each subnet to either the pub or priv route table
-                t.add_resource(
-                    ec2.SubnetRouteTableAssociation(
-                        '%sRouteTableAssociation%s' % (name_prefix, name_suffix),
-                        SubnetId=Ref(subnet_name),
-                        RouteTableId=Ref(route_table_name)
-                    )
-                )
+                            NatGatewayId=Ref(nat_gateway)))
 
 
-        # Outputs
-        for net_type in net_types:
-            t.add_output(Output(
-                    '%sSubnets' % net_type.capitalize(),
-                    Value=Join(',', [Ref(sn) for sn in subnets[net_type]])))
-            for i, sn in enumerate(subnets[net_type]):
-                t.add_output(Output(sn, Value=Ref(sn)))
+    def create_template(self):
+        subnets = self.validate_custom_subnets()
+        zones = self.availability_zones()
+        self.create_vpc()
+        self.create_internet_gateway()
+        self.create_subnets_in_availability_zones(subnets, zones)
+        self.create_nat_gateways(subnets, zones)
+        self.create_route_tables(subnets)
+        self.create_route_table_associations(subnets, zones)
+        self.create_default_routes_for_public_subnets(subnets)
+        self.create_default_routes_for_private_subnets(subnets, zones)
+        ## Debugging
+        #variables = self.get_variables()
+        #print('variables: %s' % variables)
+        #print('zones: %s' % zones)
+        #print('subnets: %s' % subnets)
 
+
+        ## Outputs
+        #for net_type in net_types:
+        #    t.add_output(Output(
+        #            '%sSubnets' % net_type.capitalize(),
+        #            Value=Join(',', [Ref(sn) for sn in subnets[net_type]])))
+        #    for i, sn in enumerate(subnets[net_type]):
+        #        t.add_output(Output(sn, Value=Ref(sn)))
         #t.add_output(Output(
         #        'AvailabilityZones',
         #        Value=Join(',', zones)))
@@ -246,68 +284,3 @@ class VPC(Blueprint):
         #            'AvailabilityZone0%d' % (i +1),
         #            Value=az))
         
-
-    def validate_custom_subnets(self):
-        variables = self.get_variables()
-        # compose subnet definitions list
-        if variables['UseDefaultSubnets']:
-            subnet_defs = DEFAULT_SUBNETS + variables['CustomSubnets']
-        else:
-            subnet_defs = variables['CustomSubnets']
-        # validate custom subnet definitions
-        public_subnets = [s['name'] for s in subnet_defs
-                if 'net_type' in s and s['net_type'] == 'public']
-        for subnet in variables['CustomSubnets']:
-            if not 'name' in subnet:
-                raise ValueError("User provided subnets must have 'name' field")
-            if not 'net_type' in subnet:
-                raise ValueError("User provided subnets must have 'net_type' field")
-            if subnet['net_type'] not in ['public', 'private']:
-                raise ValueError("Value of 'net_type' field in user provided subnets "
-                                 "must be one of ['public', 'private']")
-            if subnet['net_type'] == 'private':
-                if not 'public_subnet' in subnet:
-                    raise ValueError("User provided subnets must have 'public_subnet' "
-                                     "field if 'net_type' is 'private'")
-                if subnet['public_subnet'] not in public_subnets:
-                    raise ValueError("'%s' is not a valid 'public_subnet' name in user "
-                                     "provided subnet '%s'"
-                                     % (subnet['public_subnet'], subnet['name']))
-        return subnet_defs
-
-
-    def availability_zones(self):
-        variables = self.get_variables()
-        zones = []
-        for i in range(variables['AZCount']):
-            #try:
-            #    az = Select(i, GetAZs(''))
-            az = Select(i, GetAZs(''))
-            zones.append(az)
-        return zones
-
-    def create_route_tables(self, subnet_defs):
-        # one route table for each subnet
-        t = self.template
-        variables = self.get_variables()
-        for s in subnet_defs:
-            route_table_name = '%sRouteTable' % s['name']
-            t.add_resource(
-                ec2.RouteTable(
-                    #Tags=[ec2.Tag('type', net_type)],
-                    route_table_name,
-                    VpcId=VPC_ID,))
-
-
-    def create_template(self):
-        variables = self.get_variables()
-        print('variables: %s' % variables)
-        subnet_defs = self.validate_custom_subnets()
-        print('subnet_defs: %s' % subnet_defs)
-        zones = self.availability_zones()
-        print('zones: %s' % zones)
-        self.create_vpc()
-        self.create_gateway()
-        self.create_route_tables(subnet_defs)
-        #self.create_network()
-
