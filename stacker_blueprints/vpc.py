@@ -52,7 +52,7 @@ from troposphere import (
 from troposphere import ec2
 #from troposphere.route53 import HostedZone, HostedZoneVPCs
 from stacker.blueprints.base import Blueprint
-#from stacker.blueprints.variables.types import CFNString
+from stacker.blueprints.variables.types import CFNString
 
 
 
@@ -66,6 +66,22 @@ GATEWAY = 'InternetGateway'
 GW_ATTACH = 'GatewayAttach'
 VPC_NAME = 'VPC'
 VPC_ID = Ref(VPC_NAME)
+
+
+def validate_cidrblock(cidrblock):
+    import re
+    cidr_re = re.compile(r'^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$')
+    if cidr_re.match(cidrblock):
+        ip, mask = cidrblock.split('/')
+        for q in ip.split('.'):
+            if int(q) > 255:
+                raise ValueError("'%s' not a valid cidr block" % cidrblock)
+        if int(mask) != 16:
+            raise ValueError("'VpcCIDR' must define a class 'B' network")
+        return cidrblock
+    raise ValueError("'%s' not a valid cidr block" % cidrblock)
+
+
 
 
 class VPC(Blueprint):
@@ -85,6 +101,7 @@ class VPC(Blueprint):
             'type': str,
             'description': 'vpc cidr block. must be class b (i.e. /16).',
             'default': '10.10.0.0/16',
+            'validator': validate_cidrblock,
         },
         'AZCount': {
             'type': int,
@@ -147,9 +164,9 @@ class VPC(Blueprint):
         t = self.template
         variables = self.get_variables()
         t.add_resource(ec2.VPC(
-            'VPC',
-            CidrBlock=variables['VpcCIDR'],
-            EnableDnsHostnames=True))
+                VPC_NAME,
+                CidrBlock=variables['VpcCIDR'],
+                EnableDnsHostnames=True))
         t.add_output(Output("VpcId", Value=VPC_ID))
 
 
