@@ -170,9 +170,9 @@ class VPC(Blueprint):
                 if subnet != name]
         if subnets[name]['priority'] in other_priorities:
             raise ValueError("subnet priority '%d' is not unique for subnet '%s'" %
-                    (subnets[name]['priority'], name)
-        quod = (subnets[name]['priority'] * 10) + az_index
+                    (subnets[name]['priority'], name))
         cidr_parts = variables['VpcCIDR'].split('.')
+        quod = (subnets[name]['priority'] * 10) + az_index
         cidr_parts[2] = str(quod)
         return '.'.join(cidr_parts).replace('/16','/24')
 
@@ -205,11 +205,10 @@ class VPC(Blueprint):
             for i in range(len(zones)):
                 subnet_name = '%sSubnet%d' % (name, i)
                 subnets[name]['az_subnets'].append(subnet_name)
-                cidr_block=self.subnet_cidr(subnets, name, i),
                 t.add_resource(ec2.Subnet(
                         subnet_name,
                         AvailabilityZone=zones[i],
-                        CidrBlock=self.cidr_block,
+                        CidrBlock=self.subnet_cidr(subnets, name, i),
                         #Tags=Tags(type=net_type),
                         VpcId=VPC_ID))
             subnet_count += 1
