@@ -52,14 +52,13 @@ from troposphere import (
 from troposphere import ec2
 #from troposphere.route53 import HostedZone, HostedZoneVPCs
 from stacker.blueprints.base import Blueprint
-from stacker.blueprints.variables.types import CFNString
 
 
 
 # Default public/private subnet layout
 DEFAULT_SUBNETS = {
-        'Public': dict(net_type='public', public_subnet=None),
-        'Private': dict(net_type='private', public_subnet='Public')}
+        'Public': dict(net_type='public', public_subnet=None, priority=0),
+        'Private': dict(net_type='private', public_subnet='Public', priority=1)}
 
 # These get used as the cfn logical resource names
 GATEWAY = 'InternetGateway'
@@ -81,6 +80,24 @@ def validate_cidrblock(cidrblock):
         return cidrblock
     raise ValueError("'%s' not a valid cidr block" % cidrblock)
 
+
+def validate_custom_subnets(custom_subnets):
+    for subnet, attributes in custom_subnets.items():
+        if not 'net_type' in attributes:
+            raise ValueError("User provided subnets must have 'net_type' field")
+        if attributes['net_type'] not in ['public', 'private']:
+            raise ValueError("Value of 'net_type' field in user provided subnets "
+                             "must be one of ['public', 'private']")
+        if attributes['net_type'] == 'private':
+            if not 'public_subnet' in attributes:
+                raise ValueError("User provided subnets must have 'public_subnet' "
+                                 "field if 'net_type' is 'private'")
+        if not 'priority' in attributes:
+            raise ValueError("User provided subnets must have 'priority' field")
+        if not isinstance(int, attributes['priority']) :
+            raise ValueError("Value of 'priority' field in user provided subnets "
+                             "must be an integer")
+    return custom_subnets
 
 
 
@@ -114,34 +131,18 @@ class VPC(Blueprint):
         'CustomSubnets': {
             'type': dict,
             'default': dict(),
+            'validator': validate_custom_subnets,
         },
     }
 
 
-    def validate_custom_subnets(self):
+    def munge_subnets(self):
         # compose subnet definitions dictionary
         variables = self.get_variables()
         subnets = dict()
         if variables['UseDefaultSubnets']:
             subnets.update(DEFAULT_SUBNETS)
         subnets.update(variables['CustomSubnets'])
-        # validate custom subnet definitions
-        public_subnets = [subnet for subnet, attributes in subnets.items()
-                if 'net_type' in attributes and attributes['net_type'] == 'public']
-        for subnet, attributes in variables['CustomSubnets'].items():
-            if not 'net_type' in attributes:
-                raise ValueError("User provided subnets must have 'net_type' field")
-            if attributes['net_type'] not in ['public', 'private']:
-                raise ValueError("Value of 'net_type' field in user provided subnets "
-                                 "must be one of ['public', 'private']")
-            if attributes['net_type'] == 'private':
-                if not 'public_subnet' in attributes:
-                    raise ValueError("User provided subnets must have 'public_subnet' "
-                                     "field if 'net_type' is 'private'")
-                if attributes['public_subnet'] not in public_subnets:
-                    raise ValueError("'%s' is not a valid 'public_subnet' name in user "
-                                     "provided subnet '%s'"
-                                     % (attributes['public_subnet'], subnet))
         return subnets
 
 
@@ -279,11 +280,16 @@ class VPC(Blueprint):
         # Default routes for private subnets through nat gateways in each az.
         # Use the nat gateways defined in the 'public_subnet' for eash subnet.
         t = self.template
+        public_subnets = [subnet for subnet, attributes in subnets.items()
+                if attributes['net_type'] == 'public']
         for name in subnets.keys():
             if subnets[name]['net_type'] == 'private':
                 for i in range(len(zones)):
                     public_subnet = subnets[name]['public_subnet']
                     nat_gateway = subnets[public_subnet]['nat_gateways'][i]
+                    if public_subnet not in public_subnets:
+                        raise ValueError("'%s' is not a valid 'public_subnet' name in "
+                                "subnet '%s'" % (public_subnet, subnet))
                     t.add_resource(ec2.Route(
                             '%sSubnetDefaultRoute%d' % (name, i),
                             RouteTableId=Ref(subnets[name]['route_table'][i]),
@@ -292,7 +298,7 @@ class VPC(Blueprint):
 
 
     def create_template(self):
-        subnets = self.validate_custom_subnets()
+        subnets = self.munge_subnets()
         zones = self.availability_zones()
         self.create_vpc()
         self.create_internet_gateway()
