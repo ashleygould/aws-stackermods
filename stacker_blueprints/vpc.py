@@ -94,10 +94,17 @@ def validate_custom_subnets(custom_subnets):
                                  "field if 'net_type' is 'private'")
         if not 'priority' in attributes:
             raise ValueError("User provided subnets must have 'priority' field")
-        if not isinstance(int, attributes['priority']) :
+        if not isinstance(int, attributes['priority']) or attributes['priority'] >= 25:
             raise ValueError("Value of 'priority' field in user provided subnets "
-                             "must be an integer")
+                             "must be an integer less than 25")
     return custom_subnets
+
+
+def validate_az_count(count):
+    if count >= 10:
+        raise ValueError("Value of 'AZCount' must be an integer less than 10")
+    return count
+
 
 
 
@@ -122,7 +129,9 @@ class VPC(Blueprint):
         },
         'AZCount': {
             'type': int,
+            'description': 'Number of Availability Zones to use. Must be an integer less than 10.',
             'default': 2,
+            'validator': validate_az_count,
         },
         'UseDefaultSubnets': {
             'type': bool,
@@ -155,9 +164,16 @@ class VPC(Blueprint):
         return zones
 
 
-    def subnet_cidr(self, vpc_cidr, subnet_index, az_index):
-        cidr_parts = vpc_cidr.split('.')
-        cidr_parts[2] = str(int(cidr_parts[2]) + (subnet_index * 10) + az_index)
+    def subnet_cidr(self, subnets, name, az_index):
+        variables = self.get_variables()
+        other_priorities = [attr['priority'] for subnet, attr in subnets.items()
+                if subnet != name]
+        if subnets[name]['priority'] in other_priorities:
+            raise ValueError("subnet priority '%d' is not unique for subnet '%s'" %
+                    (subnets[name]['priority'], name)
+        quod = (subnets[name]['priority'] * 10) + az_index
+        cidr_parts = variables['VpcCIDR'].split('.')
+        cidr_parts[2] = str(quod)
         return '.'.join(cidr_parts).replace('/16','/24')
 
 
@@ -189,10 +205,11 @@ class VPC(Blueprint):
             for i in range(len(zones)):
                 subnet_name = '%sSubnet%d' % (name, i)
                 subnets[name]['az_subnets'].append(subnet_name)
+                cidr_block=self.subnet_cidr(subnets, name, i),
                 t.add_resource(ec2.Subnet(
                         subnet_name,
                         AvailabilityZone=zones[i],
-                        CidrBlock=self.subnet_cidr(variables['VpcCIDR'], subnet_count, i),
+                        CidrBlock=self.cidr_block,
                         #Tags=Tags(type=net_type),
                         VpcId=VPC_ID))
             subnet_count += 1
