@@ -21,3 +21,4 @@ stacks:
       #  DB:
       #    net_type: private
       #    public_subnet: Public
+      #    priority: 4

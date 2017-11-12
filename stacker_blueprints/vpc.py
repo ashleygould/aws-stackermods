@@ -43,7 +43,6 @@ from troposphere import (
     Ref,
     Output,
     Join,
-    #FindInMap,
     Select,
     GetAZs,
     #Tags,
@@ -94,7 +93,7 @@ def validate_custom_subnets(custom_subnets):
                                  "field if 'net_type' is 'private'")
         if not 'priority' in attributes:
             raise ValueError("User provided subnets must have 'priority' field")
-        if not isinstance(int, attributes['priority']) or attributes['priority'] >= 25:
+        if not isinstance(attributes['priority'], int) or attributes['priority'] >= 25:
             raise ValueError("Value of 'priority' field in user provided subnets "
                              "must be an integer less than 25")
     return custom_subnets
