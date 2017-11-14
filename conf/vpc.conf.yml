@@ -1,22 +1,35 @@
-namespace: testvpc
-# this lets me refer to blueprint classes relative to config
+# Sample stacker config file for building VPC stack per 
+#
+namespace: vpc
+
+# Append project directory to python sys.path.  This lets me refer to blueprint
+# classes relative to cwd.  example:
+#   cd stacker_modules/
+#   stacker build -i -r us-west-2 conf/vpc.conf.yml
+#
 sys_path: ./
+
+# Create default variables pattern out of stack outputs for use in other stacks.
+# Parameters with :: in them refer to <stack>::<Output>
+#
 vpc_parameters: &vpc_parameters
-  # parametrs with ::'s in them refer to <stack>::<Output>rs
   VpcId: ${output vpc::VpcId}
-  #PublicSubnets: ${output vpc::PublicSubnets}
-  #PrivateSubnets: ${output vpc::PrivateSubnets}
-  #AvailabilityZones: ${output vpc::AvailabilityZones}
+  PublicSubnets: ${output vpc::PublicSubnets}
+  PrivateSubnets: ${output vpc::PrivateSubnets}
+  AvailabilityZones: ${output vpc::AvailabilityZones}
 
 stacks:
   - name: vpc
-    class_path: stacker_blueprints.vpc.VPC
-    # Flag to enable/disable a stack. Default is true
+    class_path: blueprints.vpc.VPC
     enabled: true
     variables:
-      VpcCIDR: 10.128.0.0/16
-      AZCount: 2
-      UseDefaultSubnets: True
+      #VpcCIDR: 10.128.0.0/16
+      #AZCount: 3
+      #UseDefaultSubnets: True
+      #Tags:
+      #  seg:team: seg
+      #  seg:app: None
+      #  seg:env: test
       #CustomSubnets:
       #  DB:
       #    net_type: private

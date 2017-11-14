@@ -1,57 +1,33 @@
 """
-vpc
-    cidrblock
-    routetable
-        pub
-        priv
-    internetgw
-    az
-        subnet
-            pub
-                subnet2rtassoc -> routetable.pub
-                natgw
-                natgweip -> natgw
-                defaultroute -> internetgw
-            priv
-                subnet2rtassoc -> routetable.priv
-                defaultroute -> az.subnet.pub.natgw
+A stacker blueprint module to generate a VPC and subnets.
 
-subnet:
-    name: str
-    type: (public|private)
-    public-subnet: (subnet.name|None)
-    routetable: str
-    availabilty-zones: list
+AWS resources created:
+    VPC with attached InternetGateway
+    Public and private subnets spanning AvailabilityZones per specification
+    NatGatways in Public subnets
+    RouteTables and default routes for all subnets.
 
-azsubnet:
-    name: (str) subnet.name + az-index
-    subnet: subnet
-    az: str
-    az-index: int
-    cidrblock: (str) get(subnet.type,vpc-cidr,az-index)
-    routetable-assoc: subnet.routetable
-    route-default: (str) get(subnet.type, subnet.public-subnet,az-index)
-    natgw:
-    natgweip:
-    natgw-assoc:
+By default we build a Public and a Private subnet in each of 2 AvailabilityZones.
+To add custom subnets or span additional AZs, specify alternative variable values
+in your stacker config file.  See a sample in './conf/vpc.conf.yml'.
+
+For full description of VPC blueprint variables see 'VARIABLES' dictionary
+in class VPC in this module.
+
 """
 
 
-
-
+from stacker.blueprints.base import Blueprint
 from troposphere import (
     Ref,
     Output,
     Join,
     Select,
     GetAZs,
-    #Tags,
-    GetAtt
+    Tags,
+    GetAtt,
+    ec2
 )
-from troposphere import ec2
-#from troposphere.route53 import HostedZone, HostedZoneVPCs
-from stacker.blueprints.base import Blueprint
-
 
 
 # Default public/private subnet layout
@@ -59,9 +35,9 @@ DEFAULT_SUBNETS = {
         'Public': dict(net_type='public', public_subnet=None, priority=0),
         'Private': dict(net_type='private', public_subnet='Public', priority=1)}
 
-# These get used as the cfn logical resource names
+# Some global cfn logical resource names
 GATEWAY = 'InternetGateway'
-GW_ATTACH = 'GatewayAttach'
+GW_ATTACH = 'InternetGatewayAttachment'
 VPC_NAME = 'VPC'
 VPC_ID = Ref(VPC_NAME)
 
@@ -108,17 +84,7 @@ def validate_az_count(count):
 
 
 class VPC(Blueprint):
-    """
-    inputs:
-        region (str:allowed-cfntype.region)
-        vcp-cidr (str:allowed-regex)
-        az-count (int)
-        use-default-subnets (bool)
-        subnets:
-          - name (str)
-            net_type (str:allowed-values)
-            public_subnet (str)
-    """
+
     VARIABLES = {
         'VpcCIDR': {
             'type': str,
@@ -141,6 +107,10 @@ class VPC(Blueprint):
             'default': dict(),
             'validator': validate_custom_subnets,
         },
+        'Tags': {
+            'type': dict,
+            'default': dict(),
+        },
     }
 
 
@@ -155,11 +125,13 @@ class VPC(Blueprint):
 
 
     def availability_zones(self):
+        t = self.template
         variables = self.get_variables()
         zones = []
         for i in range(variables['AZCount']):
             az = Select(i, GetAZs(''))
             zones.append(az)
+        t.add_output(Output('AvailabilityZones', Value=Join(",", zones)))
         return zones
 
 
@@ -182,8 +154,11 @@ class VPC(Blueprint):
         t.add_resource(ec2.VPC(
                 VPC_NAME,
                 CidrBlock=variables['VpcCIDR'],
-                EnableDnsHostnames=True))
+                EnableDnsHostnames=True,
+                Tags=Tags(variables['Tags']),
+                ))
         t.add_output(Output("VpcId", Value=VPC_ID))
+        t.add_output(Output("CIDR", Value=variables['VpcCIDR']))
 
 
     def create_internet_gateway(self):
@@ -208,9 +183,13 @@ class VPC(Blueprint):
                         subnet_name,
                         AvailabilityZone=zones[i],
                         CidrBlock=self.subnet_cidr(subnets, name, i),
-                        #Tags=Tags(type=net_type),
+                        Tags=Tags(net_type=subnets[name]['net_type']) + Tags(variables['Tags']),
                         VpcId=VPC_ID))
-            subnet_count += 1
+        # Outputs
+        for name in subnets:
+            t.add_output(Output(
+                    '%sSubnets' % name,
+                    Value=Join(',', [Ref(sn) for sn in subnets[name]['az_subnets']])))
 
 
     def create_nat_gateways(self, subnets, zones):
@@ -329,20 +308,3 @@ class VPC(Blueprint):
         #print('variables: %s' % variables)
         #print('zones: %s' % zones)
         #print('subnets: %s' % subnets)
-
-
-        ## Outputs
-        #for net_type in net_types:
-        #    t.add_output(Output(
-        #            '%sSubnets' % net_type.capitalize(),
-        #            Value=Join(',', [Ref(sn) for sn in subnets[net_type]])))
-        #    for i, sn in enumerate(subnets[net_type]):
-        #        t.add_output(Output(sn, Value=Ref(sn)))
-        #t.add_output(Output(
-        #        'AvailabilityZones',
-        #        Value=Join(',', zones)))
-        #for i, az in enumerate(zones):
-        #    t.add_output(Output(
-        #            'AvailabilityZone0%d' % (i +1),
-        #            Value=az))
-        
