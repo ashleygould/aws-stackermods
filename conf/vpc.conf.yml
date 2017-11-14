@@ -4,7 +4,7 @@ namespace: example
 
 # Append project directory to python sys.path.  This lets me refer to blueprint
 # classes relative to cwd.  example:
-#   cd stacker_modules/
+#   cd aws-stakermods/
 #   stacker build -i -r us-west-2 conf/vpc.conf.yml
 #
 sys_path: ./
@@ -20,7 +20,8 @@ vpc_parameters: &vpc_parameters
 
 stacks:
   - name: vpc
-    class_path: blueprints.vpc.VPC
+    #class_path: blueprints.vpc.VPC
+    class_path: stackermods.blueprints.vpc.VPC
     enabled: true
     variables:
       #VpcCIDR: 10.128.0.0/16

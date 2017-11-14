@@ -38,6 +38,18 @@ VPC_NAME = 'VPC'
 VPC_ID = Ref(VPC_NAME)
 
 
+
+def help():
+    bp = VPC('VPC', None)
+    print(__doc__)
+    print('\nConfig variables for %s blueprint:\n' % bp.name)
+    vars = getattr(bp, "VARIABLES", {})
+    for var, attr in sorted(vars.items()):
+        default = attr.get('default', '')
+        desc = attr.get('description', '')
+        print("%s\n  %s\n  Default: %s\n" % (var, desc, default))
+
+
 def validate_cidrblock(cidrblock):
     import re
     cidr_re = re.compile(r'^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$')
@@ -328,15 +340,3 @@ class VPC(Blueprint):
         #print('variables: %s' % variables)
         #print('zones: %s' % zones)
         #print('subnets: %s' % subnets)
-
-
-
-if __name__ == '__main__':
-    bp = VPC('VPC', None)
-    print(__doc__)
-    print('\nConfig variables for %s blueprint:\n' % bp.name)
-    vars = getattr(bp, "VARIABLES", {})
-    for var, attr in sorted(vars.items()):
-        default = attr.get('default', '')
-        desc = attr.get('description', '')
-        print("%s\n  %s\n  Default: %s\n" % (var, desc, default))
