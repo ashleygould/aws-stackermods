@@ -10,10 +10,6 @@ AWS resources created:
 By default we build a Public and a Private subnet in each of 2 AvailabilityZones.
 To add custom subnets or span additional AZs, specify alternative variable values
 in your stacker config file.  See a sample in './conf/vpc.conf.yml'.
-
-For full description of VPC blueprint variables see 'VARIABLES' dictionary
-in class VPC in this module.
-
 """
 
 
@@ -32,8 +28,8 @@ from troposphere import (
 
 # Default public/private subnet layout
 DEFAULT_SUBNETS = {
-        'Public': dict(net_type='public', public_subnet=None, priority=0),
-        'Private': dict(net_type='private', public_subnet='Public', priority=1)}
+        'Public': dict(net_type='public', gateway_subnet=None, priority=0),
+        'Private': dict(net_type='private', gateway_subnet='Public', priority=1)}
 
 # Some global cfn logical resource names
 GATEWAY = 'InternetGateway'
@@ -64,8 +60,8 @@ def validate_custom_subnets(custom_subnets):
             raise ValueError("Value of 'net_type' field in user provided subnets "
                              "must be one of ['public', 'private']")
         if attributes['net_type'] == 'private':
-            if not 'public_subnet' in attributes:
-                raise ValueError("User provided subnets must have 'public_subnet' "
+            if not 'gateway_subnet' in attributes:
+                raise ValueError("User provided subnets must have 'gateway_subnet' "
                                  "field if 'net_type' is 'private'")
         if not 'priority' in attributes:
             raise ValueError("User provided subnets must have 'priority' field")
@@ -88,28 +84,52 @@ class VPC(Blueprint):
     VARIABLES = {
         'VpcCIDR': {
             'type': str,
-            'description': 'vpc cidr block. must be class b (i.e. /16).',
             'default': '10.10.0.0/16',
             'validator': validate_cidrblock,
+            'description': (
+"""Cidr block for the VPC.  Must define a class B network (i.e. '/16')."""),
         },
         'AZCount': {
             'type': int,
-            'description': 'Number of Availability Zones to use. Must be an integer less than 10.',
             'default': 2,
             'validator': validate_az_count,
+            'description': (
+"""Number of Availability Zones to use.  Must be an integer less than 10."""),
         },
         'UseDefaultSubnets': {
             'type': bool,
             'default': True,
+            'description': (
+"""Whether or not to create the default 'Public' and 'Private' subnets."""),
         },
         'CustomSubnets': {
             'type': dict,
             'default': dict(),
             'validator': validate_custom_subnets,
+            'description': (
+"""Dictionary of custom subnets to create in addition to or instead of the
+  default 'Public' and 'Private' subnets.  Each custom subnet is a dictionary
+  with the following keys:
+    'net_type' - either 'public' or 'private',
+    'priority' - integer used to determine the subnet cidr block.  Must
+                 be unique among all subnets.
+    'gateway_subnet' - the public subnet to use as a default route.
+                       Required for subnets of net_type 'private'.
+  Example (yaml):                       
+    DB:
+      net_type: private
+      gateway_subnet: Public
+      priority: 2
+    App:
+      net_type: private
+      gateway_subnet: Public
+      priority: 3 """),
         },
         'Tags': {
             'type': dict,
             'default': dict(),
+            'description': (
+"""Dictionary of tags to apply to stack resources (e.g. {tagname: value})"""),
         },
     }
 
@@ -272,18 +292,18 @@ class VPC(Blueprint):
 
     def create_default_routes_for_private_subnets(self, subnets, zones):
         # Default routes for private subnets through nat gateways in each az.
-        # Use the nat gateways defined in the 'public_subnet' for eash subnet.
+        # Use the nat gateways defined in the 'gateway_subnet' for eash subnet.
         t = self.template
         public_subnets = [subnet for subnet, attributes in subnets.items()
                 if attributes['net_type'] == 'public']
         for name in subnets.keys():
             if subnets[name]['net_type'] == 'private':
                 for i in range(len(zones)):
-                    public_subnet = subnets[name]['public_subnet']
-                    nat_gateway = subnets[public_subnet]['nat_gateways'][i]
-                    if public_subnet not in public_subnets:
-                        raise ValueError("'%s' is not a valid 'public_subnet' name in "
-                                "subnet '%s'" % (public_subnet, subnet))
+                    gateway_subnet = subnets[name]['gateway_subnet']
+                    nat_gateway = subnets[gateway_subnet]['nat_gateways'][i]
+                    if gateway_subnet not in public_subnets:
+                        raise ValueError("'%s' is not a valid 'gateway_subnet' name in "
+                                "subnet '%s'" % (gateway_subnet, subnet))
                     t.add_resource(ec2.Route(
                             '%sSubnetDefaultRoute%d' % (name, i),
                             RouteTableId=Ref(subnets[name]['route_table'][i]),
@@ -308,3 +328,15 @@ class VPC(Blueprint):
         #print('variables: %s' % variables)
         #print('zones: %s' % zones)
         #print('subnets: %s' % subnets)
+
+
+
+if __name__ == '__main__':
+    bp = VPC('VPC', None)
+    print(__doc__)
+    print('\nConfig variables for %s blueprint:\n' % bp.name)
+    vars = getattr(bp, "VARIABLES", {})
+    for var, attr in sorted(vars.items()):
+        default = attr.get('default', '')
+        desc = attr.get('description', '')
+        print("%s\n  %s\n  Default: %s\n" % (var, desc, default))

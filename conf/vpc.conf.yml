@@ -1,6 +1,6 @@
 # Sample stacker config file for building VPC stack per 
 #
-namespace: vpc
+namespace: example
 
 # Append project directory to python sys.path.  This lets me refer to blueprint
 # classes relative to cwd.  example:
