@@ -3,21 +3,37 @@
 """Help messages for stackermods blueprints
 
 Usage:
-    modhelp -m MODULE_NAME
+    stackermods <module>
+    stackermods (-l | -h | -v)
+
+where <module> is the name of a blueprint module
 
 Options:
-    -m MODULE_NAME  Name of the blueprint module
+    -l, --list      Print listing of all blueprint modules in collection
+    -h, --help      Print usage message
+    -v, --version   Print version info
 """
 
-from docopt import docopt
+import sys
 import importlib
+from docopt import docopt
+import blueprints
 
 
 
 def main():
-    args = docopt(__doc__)
-    bp_module = importlib.import_module('stackermods.blueprints.' + args['-m'])
-    bp_module.blueprint_help()
+    args = docopt(__doc__, version='stackermods %s' % blueprints.VERSION)
+    #print(args)
+    if args['--list']:
+        print('Available blueprint modules: %s' % ' '.join(blueprints.MODULES))
+    elif args['<module>']:
+        if args['<module>'] not in blueprints.MODULES:
+            print('No such blueprint module: %s'% args['<module>'])
+            sys.exit(1)
+        print('Module: %s' % args['<module>'])
+        print('Version: %s' % blueprints.VERSION)
+        bp_module = importlib.import_module('stackermods.blueprints.' + args['<module>'])
+        bp_module.blueprint_help()
 
 if __name__ == '__main__':
     main()

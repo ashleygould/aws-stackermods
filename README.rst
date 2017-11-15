@@ -50,7 +50,7 @@ AWS-stackermods provides a utility script for getting info about it's blueprint
 modules::
 
   # list blueprint modules in the collection
-  stackermods
+  stackermods -l
 
   # display help message for one of the modules
   stackermods vpc
@@ -67,8 +67,8 @@ Building the 'vpc' stack in 'example' namespace using sample config file::
   stacker build -i -r us-west-2 conf/vpc.conf.yml
   
   # destroy stacks 
-  # use --force flag to actually destroy stacks
   stacker destroy -i -r us-west-2 conf/vpc.conf.yml
+  # --force flag required to actually destroy stacks
   stacker destroy --force -r us-west-2 -f conf/vpc.conf.yml
 
 
