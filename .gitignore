@@ -1,5 +1,4 @@
 *.swp
 *.pyc
 __pycache__
-test/stack_templates
 aws_stackermods.egg-info

@@ -79,4 +79,25 @@ For basic stacker usage::
 
 
 
+Testing
+-------
+
+Stacker provides a simple unittest class, stacker.blueprints.testutil.BlueprintTestCase,
+which runs diff against a known good copy of a rendered template.
+
+run tests from base of project::
+
+  aws-stackermods> find tests -type f
+  tests/fixtures/blueprints/VPC.json
+  tests/test_vpc.py
+  tests/.test_vpc.py.swp
+  tests/__init__.py
+
+  aws-stackermods> python tests/test_vpc.py 
+  .
+  ----------------------------------------------------------------------
+  Ran 1 test in 0.009s
+  
+  OK
+
 
