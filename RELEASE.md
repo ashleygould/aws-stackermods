@@ -10,14 +10,15 @@
 - Commit changes: `git commit -m "Release 1.1.1"`
 - Create tag: `git tag -am "Release 1.1.1" 1.1.1`
 - Push branch up to git: `git push -u origin release-1.1.1`
+- Push tag: `git push --tags`
 - Open a PR for the release, ensure that tests pass
 
 ## Releasing
 
-- Push tag: `git push --tags`
-- Merge PR into master, checkout master locally: `git checkout master; git pull`
+- Checkout master locally: `git checkout master; git pull; git fetch`
+- Merge PR into master: `git merge release-1.1.1; git push`
 - Update github release page: https://github.com/ashleygould/aws-stakermods/releases
-  - use the contents of the latest CHANGELOG entry for the body.
+  Use the contents of the latest CHANGELOG entry for the body.
 
 # Helper to create CHANGELOG entries
 git log --reverse --pretty=format:"%s" | tail -100 | sed 's/^/- /'
