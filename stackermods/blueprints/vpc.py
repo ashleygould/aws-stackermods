@@ -39,7 +39,7 @@ VPC_ID = Ref(VPC_NAME)
 
 
 
-def help():
+def blueprint_help():
     bp = VPC('VPC', None)
     print(__doc__)
     print('\nConfig variables for %s blueprint:\n' % bp.name)

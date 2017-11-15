@@ -12,10 +12,12 @@ Options:
 from docopt import docopt
 import importlib
 
-if __name__ == '__main__':
+
+
+def main():
     args = docopt(__doc__)
-    module = importlib.import_module('blueprints.' + args['-m'])
-    #module = importlib.import_module(args['-m'], 'stackermods.blueprints')
-    module.help()
+    bp_module = importlib.import_module('stackermods.blueprints.' + args['-m'])
+    bp_module.blueprint_help()
 
-
+if __name__ == '__main__':
+    main()
