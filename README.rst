@@ -1,59 +1,81 @@
-________________________________________________________________________________
-11/13/2017
+===============
+AWS-stackermods
+===============
 
-TODO vpc.py:
+A collection of stacker blueprint modules
 
-tags
-outputs
-unittests
-docs
+-------------
 
+Stacker is a python framework for deploying AWS cloudformation stacks.  A stacker
+blueprint is a python module that builds a AWS cloudformation template using
+troposphere.
 
+For info on stacker and troposphere see:
 
-TODO project:
-rename
-README.rst
-pip packaging
-initial release 
-
-
+- https://github.com/remind101/stacker
+- http://stacker.readthedocs.io/en/latest/
+- https://github.com/cloudtools/troposphere
 
 
 
+Installing AWS-stackermods
+--------------------------
 
-________________________________________________________________________________
-11/7/2017
+Installing AWS-stackermods installs stacker, troposphere and all other requirements
+for running stacker.
 
-stacker runs in python2.7
+Stacker does not yet support python 3. Use python2.7 (too bad).
 
-pip install stacker
+Clone this git repo into your homedir and install to ~/.local/ in editable mode::
 
-./conf
-./conf/vpc.conf.yml
-./test
-./stacker_blueprints
-./stacker_blueprints/vpc.py
-
-
-stacker build -o -v -i conf/vpc.conf.yml 
-[2017-11-07T15:41:57] INFO stacker.commands.stacker:24(configure): Using interactive AWS provider mode.
-[2017-11-07T15:41:57] INFO stacker.plan:318(outline): Plan "Create/Update stacks":
-[2017-11-07T15:41:57] INFO stacker.plan:326(outline):   - step: 1: target: "testvpc-vpc", action: "_launch_stack"
+  git clone https://github.com/ashleygould/aws-stackermods
+  pip install --user -e aws-stackermods
 
 
+I run it under a python2.7 virtualenv::
 
-# just dump template to file
-mkdir -p test/stack_templates/testvpc-vpc/
-stacker build -v -i -r us-west-2 -d test/ conf/vpc.conf.yml
-
-# build/update stack (interactive)
-stacker build -v -i -r us-west-2 conf/vpc.conf.yml
-
-# destroy stacks
-stacker destroy -v -i -r us-west-2 conf/vpc.conf.yml
-stacker destroy -v -i -r us-west-2 -f conf/vpc.conf.yml
+  mkdir ~/python-venv
+  virtualenv -p /usr/bin/python2.7 ~/python-venv/python2.7
+  source ~/python-venv/python2.7/bin/activate
+  
+  git clone https://github.com/ashleygould/aws-stackermods
+  pip install -e aws-stackermods
 
 
+
+Usage
+-----
+
+AWS-stackermods provides a utility script for getting info about it's blueprint
+modules::
+
+  # list blueprint modules in the collection
+  stackermods
+
+  # display help message for one of the modules
+  stackermods vpc
+
+
+Building the 'vpc' stack in 'example' namespace using sample config file::
+
+  # just dump template to file
+  mkdir -p /tmp/stack_templates/example-vpc/
+  cd ~/path/to/aws-stackermods
+  stacker build -i -r us-west-2 -d /tmp conf/vpc.conf.yml
+  
+  # build/update stack (interactive)
+  stacker build -i -r us-west-2 conf/vpc.conf.yml
+  
+  # destroy stacks 
+  # use --force flag to actually destroy stacks
+  stacker destroy -i -r us-west-2 conf/vpc.conf.yml
+  stacker destroy --force -r us-west-2 -f conf/vpc.conf.yml
+
+
+For basic stacker usage::
+
+  stacker -h
+  stacker build -h
 
 
 

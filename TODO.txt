@@ -1,0 +1,17 @@
+
+________________________________________________________________________________
+11/15/2017
+
+TODO vpc.py:
+DONE tags
+DONE outputs
+unittests
+DONE docs
+
+
+TODO project:
+DONE rename
+README.rst
+DONE pip packaging
+initial release 
+
